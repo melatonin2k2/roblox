@@ -21,9 +21,16 @@ async function getUGCStats(userId) {
                 totalValue += price;
 
                 // Fetch thumbnail from catalog API
-                const thumbRes = await fetch(`https://thumbnails.roblox.com/v1/assets?assetIds=${item.assetId}&size=150x150&format=Png&isCircular=false`);
-                const thumbData = await thumbRes.json();
-                const imageUrl = thumbData.data[0]?.imageUrl || "";
+                let imageUrl = "";
+                try {
+                    const thumbRes = await fetch(`https://thumbnails.roblox.com/v1/assets?assetIds=${item.assetId}&size=150x150&format=Png&isCircular=false`);
+                    const thumbData = await thumbRes.json();
+                    if (thumbData.data && thumbData.data.length > 0) {
+                        imageUrl = thumbData.data[0].imageUrl || "";
+                    }
+                } catch (e) {
+                    console.warn("Failed to fetch thumbnail for assetId", item.assetId);
+                }
 
                 assets.push({
                     assetId: item.assetId,
