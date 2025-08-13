@@ -6,11 +6,18 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// Get Roblox userId from username
+// Updated getUserId function
 async function getUserId(username) {
-    const res = await fetch(`https://api.roblox.com/users/get-by-username?username=${username}`);
+    const res = await fetch(`https://users.roblox.com/v1/usernames/users`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ usernames: [username] })
+    });
     const data = await res.json();
-    return data.Id || null;
+    if (data.data && data.data.length > 0) {
+        return data.data[0].id;
+    }
+    return null;
 }
 
 // Get total UGC value
