@@ -6,21 +6,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// Updated getUserId function
-async function getUserId(username) {
-    const res = await fetch(`https://users.roblox.com/v1/usernames/users`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ usernames: [username] })
-    });
-    const data = await res.json();
-    if (data.data && data.data.length > 0) {
-        return data.data[0].id;
-    }
-    return null;
-}
-
-// Get total UGC value
+// Get total UGC value from userId directly
 async function getUGCValue(userId) {
     let totalValue = 0;
     let cursor = "";
@@ -45,18 +31,14 @@ async function getUGCValue(userId) {
     return totalValue;
 }
 
-// API endpoint
-app.get("/ugcvalue/:username", async (req, res) => {
+// API endpoint accepting userId directly
+app.get("/ugcvalue/:userId", async (req, res) => {
     try {
-        const username = req.params.username;
-        const userId = await getUserId(username);
-
-        if (!userId) {
-            return res.status(404).json({ error: "User not found" });
-        }
+        const userId = parseInt(req.params.userId);
+        if (!userId) return res.status(400).json({ error: "Invalid userId" });
 
         const total = await getUGCValue(userId);
-        res.json({ username, totalValue: total });
+        res.json({ userId, totalValue: total });
     } catch (error) {
         res.status(500).json({ error: error.message });
     }
