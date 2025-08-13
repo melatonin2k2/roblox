@@ -6,7 +6,7 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// Fetch UGC stats including thumbnails
+// Fetch UGC stats including correct collectible images
 async function getUGCStats(userId) {
     let totalValue = 0;
     let assets = [];
@@ -22,16 +22,22 @@ async function getUGCStats(userId) {
                 const price = item.recentAveragePrice || 0;
                 totalValue += price;
 
-                // Fetch correct thumbnail from Roblox Thumbnails API
+                // Fetch the correct collectible image from catalog API
                 let imageUrl = "";
                 try {
-                    const thumbRes = await fetch(
-                        `https://thumbnails.roblox.com/v1/assets?assetIds=${item.assetId}&size=150x150&format=Png&isCircular=false`
+                    const catalogRes = await fetch(
+                        `https://catalog.roblox.com/v1/catalog/items/details?itemIds=${item.assetId}`
                     );
-                    const thumbData = await thumbRes.json();
-                    imageUrl = thumbData.data[0]?.imageUrl || "";
+                    const catalogData = await catalogRes.json();
+                    if (
+                        catalogData.data &&
+                        catalogData.data[0] &&
+                        catalogData.data[0].collectibleProductImage
+                    ) {
+                        imageUrl = catalogData.data[0].collectibleProductImage;
+                    }
                 } catch (e) {
-                    console.warn("Failed to fetch thumbnail for assetId", item.assetId);
+                    console.warn("Failed to fetch catalog image for assetId", item.assetId);
                 }
 
                 assets.push({
@@ -47,7 +53,21 @@ async function getUGCStats(userId) {
         if (!cursor) break;
     }
 
-    return { totalValue, assets };
+    // Determine most expensive asset
+    let mostExpensive = { name: "N/A", price: 0, thumbnail: "" };
+    for (const asset of assets) {
+        if (asset.price > mostExpensive.price) {
+            mostExpensive = asset;
+        }
+    }
+
+    return {
+        totalValue,
+        totalCount: assets.length,
+        mostExpensiveName: mostExpensive.name,
+        mostExpensiveImage: mostExpensive.thumbnail,
+        assets
+    };
 }
 
 // API endpoint
@@ -63,4 +83,4 @@ app.get("/ugcvalue/:userId", async (req, res) => {
     }
 });
 
-app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, "0.0.0.0", () => console.log(`Server running on port ${PORT}`));
