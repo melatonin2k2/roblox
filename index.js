@@ -61,3 +61,4 @@ app.get("/ugcvalue/:userId", async (req, res) => {
     try {
         const userId = parseInt(req.params.userId);
         if (!userId) return res.status(400).json({
+app.listen(PORT, "0.0.0.0", () => console.log(`Server running on port ${PORT}`));
