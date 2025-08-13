@@ -6,15 +6,17 @@ app.use(express.json());
 
 const PORT = process.env.PORT || 3000;
 
-// Fetch UGC stats including correct collectible images
+// Fetch all UGC collectibles for a user, with thumbnails
 async function getUGCStats(userId) {
     let totalValue = 0;
     let assets = [];
-    let cursor = "";
-    let url = `https://inventory.roblox.com/v1/users/${userId}/assets/collectibles?limit=100`;
+    let cursor = null;
 
-    while (url) {
-        const res = await fetch(url + (cursor ? `&cursor=${cursor}` : ""));
+    do {
+        let url = `https://inventory.roblox.com/v1/users/${userId}/assets/collectibles?limit=100`;
+        if (cursor) url += `&cursor=${cursor}`;
+
+        const res = await fetch(url);
         const data = await res.json();
 
         if (data.data && data.data.length > 0) {
@@ -22,50 +24,39 @@ async function getUGCStats(userId) {
                 const price = item.recentAveragePrice || 0;
                 totalValue += price;
 
-                // Fetch the correct collectible image from catalog API
                 let imageUrl = "";
                 try {
-                    const catalogRes = await fetch(
-                        `https://catalog.roblox.com/v1/catalog/items/details?itemIds=${item.assetId}`
+                    const thumbRes = await fetch(
+                        `https://thumbnails.roblox.com/v1/assets?assetIds=${item.assetId}&size=150x150&format=Png&isCircular=false`
                     );
-                    const catalogData = await catalogRes.json();
-                    if (
-                        catalogData.data &&
-                        catalogData.data[0] &&
-                        catalogData.data[0].collectibleProductImage
-                    ) {
-                        imageUrl = catalogData.data[0].collectibleProductImage;
-                    }
+                    const thumbData = await thumbRes.json();
+                    imageUrl = thumbData.data[0]?.imageUrl || "";
                 } catch (e) {
-                    console.warn("Failed to fetch catalog image for assetId", item.assetId);
+                    console.warn("Failed to fetch thumbnail for assetId", item.assetId);
                 }
 
                 assets.push({
                     assetId: item.assetId,
                     name: item.name,
                     price,
-                    thumbnail: imageUrl,
+                    thumbnail: imageUrl
                 });
             }
         }
 
         cursor = data.nextPageCursor;
-        if (!cursor) break;
-    }
+    } while (cursor);
 
-    // Determine most expensive asset
-    let mostExpensive = { name: "N/A", price: 0, thumbnail: "" };
-    for (const asset of assets) {
-        if (asset.price > mostExpensive.price) {
-            mostExpensive = asset;
-        }
-    }
+    // Determine the most expensive asset
+    let mostExpensive = assets.reduce((prev, current) =>
+        (current.price > (prev?.price || 0)) ? current : prev, null
+    );
 
     return {
         totalValue,
         totalCount: assets.length,
-        mostExpensiveName: mostExpensive.name,
-        mostExpensiveImage: mostExpensive.thumbnail,
+        mostExpensiveName: mostExpensive?.name || "N/A",
+        mostExpensiveImage: mostExpensive?.thumbnail || "",
         assets
     };
 }
@@ -83,4 +74,5 @@ app.get("/ugcvalue/:userId", async (req, res) => {
     }
 });
 
+// Start server
 app.listen(PORT, "0.0.0.0", () => console.log(`Server running on port ${PORT}`));
