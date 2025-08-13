@@ -22,23 +22,18 @@ async function getUGCStats(userId) {
                 const price = item.recentAveragePrice || 0;
                 totalValue += price;
 
-                // Fetch the correct collectible image from catalog
-                let imageUrl = "";
-                try {
-                    const catalogRes = await fetch(
-                        `https://catalog.roblox.com/v1/catalog/items/details?itemIds=${item.assetId}`
-                    );
-                    const catalogData = await catalogRes.json();
-                    if (
-                        catalogData.data &&
-                        catalogData.data[0] &&
-                        catalogData.data[0].collectibleProductImage
-                    ) {
-                        imageUrl = catalogData.data[0].collectibleProductImage;
-                    }
-                } catch (e) {
-                    console.warn("Failed to fetch catalog image for assetId", item.assetId);
-                }
+// Fetch the correct collectible thumbnail from Roblox Thumbnails API
+let imageUrl = "";
+try {
+    const thumbRes = await fetch(
+        `https://thumbnails.roblox.com/v1/assets?assetIds=${item.assetId}&size=150x150&format=Png&isCircular=false`
+    );
+    const thumbData = await thumbRes.json();
+    imageUrl = thumbData.data[0]?.imageUrl || "";
+} catch (e) {
+    console.warn("Failed to fetch thumbnail for assetId", item.assetId);
+}
+
 
                 assets.push({
                     assetId: item.assetId,
@@ -71,4 +66,4 @@ app.get("/ugcvalue/:userId", async (req, res) => {
     }
 });
 
-app.listen(PORT, "0.0.0.0", () => console.log(`Server running on port ${PORT}`));
+app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
