@@ -60,5 +60,15 @@ async function getUGCStats(userId) {
 app.get("/ugcvalue/:userId", async (req, res) => {
     try {
         const userId = parseInt(req.params.userId);
-        if (!userId) return res.status(400).json({
+        if (!userId) {
+            return res.status(400).json({ error: "Invalid userId" });
+        }
+
+        const stats = await getUGCStats(userId);
+        res.json({ userId, ...stats });
+    } catch (err) {
+        res.status(500).json({ error: err.message });
+    }
+});
+
 app.listen(PORT, "0.0.0.0", () => console.log(`Server running on port ${PORT}`));
