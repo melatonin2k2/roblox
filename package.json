@@ -1,0 +1,15 @@
+{
+  "name": "ugc-flex-api",
+  "version": "1.0.0",
+  "description": "API for Roblox Flex Your UGCs game",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js"
+  },
+  "author": "Sleep",
+  "license": "ISC",
+  "dependencies": {
+    "express": "^4.18.2",
+    "node-fetch": "^3.4.0"
+  }
+}
