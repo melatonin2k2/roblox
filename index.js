@@ -4,45 +4,74 @@ const fetch = require("node-fetch");
 const app = express();
 const PORT = 3000;
 
-// Roblox collectibles API
 const INVENTORY_API = (userId, cursor = "") =>
   `https://inventory.roblox.com/v1/users/${userId}/assets/collectibles?limit=100&cursor=${cursor}`;
 
-// Fetch all limited/resellable items with pagination
 async function getAllSellableItems(userId) {
   let items = [];
   let cursor = "";
   let hasMore = true;
 
-  try {
-    while (hasMore) {
-      const res = await fetch(INVENTORY_API(userId, cursor));
-      const data = await res.json();
+  while (hasMore) {
+    let attempt = 0;
+    let success = false;
+    let data;
 
-      if (data && data.data) {
-        // Only include limited and limited unique items
-        const sellable = data.data.filter(item =>
-          item.isLimited || item.isLimitedUnique
-        );
+    while (attempt < 3 && !success) { // retry up to 3 times
+      try {
+        const res = await fetch(INVENTORY_API(userId, cursor));
+        data = await res.json();
 
-        items = items.concat(sellable);
-      }
+        if (data.errors) {
+          throw new Error(JSON.stringify(data.errors));
+        }
 
-      if (data.nextPageCursor) {
-        cursor = data.nextPageCursor;
-        // Small delay to reduce request rate
-        await new Promise(resolve => setTimeout(resolve, 200));
-      } else {
-        hasMore = false;
+        success = true;
+      } catch (err) {
+        attempt++;
+        console.warn(`Failed to fetch page for userId ${userId}, attempt ${attempt}: ${err}`);
+        await new Promise(r => setTimeout(r, 1000)); // 1s delay before retry
       }
     }
-  } catch (err) {
-    console.error(`Failed to fetch inventory for userId ${userId}:`, err);
-    // Return empty array if fetch fails
-    return [];
+
+    if (!success) {
+      console.error(`Skipping page for userId ${userId} after 3 failed attempts.`);
+      break;
+    }
+
+    if (data.data) {
+      const sellable = data.data.filter(item =>
+        item.isLimited ||
+        item.isLimitedUnique ||
+        item.recentAveragePrice > 0 ||
+        item.saleStatus === "Resellable" ||
+        item.restrictions?.includes("Resellable")
+      );
+      items = items.concat(sellable);
+    }
+
+    if (data.nextPageCursor) {
+      cursor = data.nextPageCursor;
+      await new Promise(r => setTimeout(r, 500)); // slower to reduce rate limits
+    } else {
+      hasMore = false;
+    }
   }
 
   return items;
+}
+
+async function fetchThumbnail(assetId) {
+  try {
+    const res = await fetch(
+      `https://thumbnails.roblox.com/v1/assets?assetIds=${assetId}&size=150x150&format=Png&isCircular=false`
+    );
+    const data = await res.json();
+    return data.data && data.data[0] ? data.data[0].imageUrl : "";
+  } catch (err) {
+    console.warn("Failed to fetch thumbnail for assetId", assetId, err);
+    return "";
+  }
 }
 
 app.get("/inventory/:userId", async (req, res) => {
@@ -60,23 +89,13 @@ app.get("/inventory/:userId", async (req, res) => {
       });
     }
 
-    // Total value of all limited items
     const TotalValue = items.reduce((sum, item) => sum + (item.recentAveragePrice || 0), 0);
 
-    // Find the most expensive item
-    let topItem = items.reduce((prev, curr) => {
-      return (curr.recentAveragePrice || 0) > (prev.recentAveragePrice || 0) ? curr : prev;
-    }, items[0]);
+    const topItem = items.reduce((prev, curr) =>
+      (curr.recentAveragePrice || 0) > (prev.recentAveragePrice || 0) ? curr : prev
+    , items[0]);
 
-    // Fetch thumbnail for top item
-    let imageUrl = "";
-    if (topItem) {
-      const thumbRes = await fetch(
-        `https://thumbnails.roblox.com/v1/assets?assetIds=${topItem.assetId}&size=150x150&format=Png&isCircular=false`
-      );
-      const thumbData = await thumbRes.json();
-      imageUrl = thumbData.data && thumbData.data[0] ? thumbData.data[0].imageUrl : "";
-    }
+    const imageUrl = topItem ? await fetchThumbnail(topItem.assetId) : "";
 
     res.json({
       TotalCount: items.length,
@@ -84,7 +103,6 @@ app.get("/inventory/:userId", async (req, res) => {
       MostExpensiveName: topItem ? topItem.name : "N/A",
       MostExpensiveImage: imageUrl
     });
-
   } catch (err) {
     console.error(err);
     res.json({
