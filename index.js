@@ -60,10 +60,7 @@ async function getAllSellableItems(userId) {
     const allItems = [...collectibles, ...assets];
 
     const sellableItems = allItems.filter(item =>
-      item.isLimited ||
-      item.isLimitedUnique ||
-      item.saleStatus === "Resellable" ||
-      (item.recentAveragePrice !== null && item.recentAveragePrice > 0)
+      item.isLimited || item.isLimitedUnique || item.saleStatus === "Resellable"
     );
 
     // Fetch thumbnails
@@ -72,7 +69,7 @@ async function getAllSellableItems(userId) {
 
     // Attach thumbnails and map items
     const itemsWithThumbnails = sellableItems.map(item => ({
-      assetId: item.assetId,
+      assetId: item.assetId,              // <--- Include assetId
       name: item.name,
       recentAveragePrice: item.recentAveragePrice || 0,
       isLimited: item.isLimited || false,
@@ -95,7 +92,7 @@ async function getAllSellableItems(userId) {
 app.get("/inventory/:userId", async (req, res) => {
   const { userId } = req.params;
   const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 50; // default 50 items per page
+  const limit = parseInt(req.query.limit) || 50;
 
   try {
     const items = await getAllSellableItems(userId);
@@ -106,6 +103,7 @@ app.get("/inventory/:userId", async (req, res) => {
         TotalValue: 0,
         MostExpensiveName: "N/A",
         MostExpensiveImage: "",
+        assetId: null,
         Page: page,
         Limit: limit,
         TotalPages: 0,
@@ -114,7 +112,7 @@ app.get("/inventory/:userId", async (req, res) => {
     }
 
     const TotalValue = items.reduce((sum, item) => sum + item.recentAveragePrice, 0);
-    const topItem = items[0]; // already sorted by price descending
+    const topItem = items[0]; // most expensive
 
     // Pagination
     const start = (page - 1) * limit;
@@ -127,6 +125,7 @@ app.get("/inventory/:userId", async (req, res) => {
       TotalValue,
       MostExpensiveName: topItem.name,
       MostExpensiveImage: topItem.imageUrl,
+      assetId: topItem.assetId,      // <--- Add this for Roblox ImageLabel
       Page: page,
       Limit: limit,
       TotalPages: totalPages,
@@ -140,6 +139,7 @@ app.get("/inventory/:userId", async (req, res) => {
       TotalValue: 0,
       MostExpensiveName: "N/A",
       MostExpensiveImage: "",
+      assetId: null,
       Page: page,
       Limit: limit,
       TotalPages: 0,
