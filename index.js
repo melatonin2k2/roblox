@@ -24,9 +24,11 @@ async function fetchAllPages(apiFunc, userId) {
 
     if (data && data.data) items = items.concat(data.data);
 
+    console.log(`[DEBUG] Fetched ${data.data.length} items from ${apiFunc.name}, cursor: ${cursor}`);
+
     if (data.nextPageCursor) {
       cursor = data.nextPageCursor;
-      await new Promise(resolve => setTimeout(resolve, 200)); // throttle requests
+      await new Promise(resolve => setTimeout(resolve, 500)); // slow down requests
     } else {
       hasMore = false;
     }
@@ -59,9 +61,16 @@ async function getAllSellableItems(userId) {
 
     const allItems = [...collectibles, ...assets];
 
+    // DEBUG: log total inventory length
+    console.log(`[DEBUG] User ${userId} total inventory items: ${allItems.length}`);
+
+    // Include any item that has a price OR is limited/resellable
     const sellableItems = allItems.filter(item =>
-      item.isLimited || item.isLimitedUnique || item.saleStatus === "Resellable"
+      item.isLimited || item.isLimitedUnique || item.saleStatus === "Resellable" || (item.recentAveragePrice !== null && item.recentAveragePrice > 0)
     );
+
+    // DEBUG: log filtered sellable items
+    console.log(`[DEBUG] User ${userId} sellable items: ${sellableItems.length}`);
 
     // Fetch thumbnails
     const assetIds = sellableItems.map(item => item.assetId);
@@ -69,7 +78,7 @@ async function getAllSellableItems(userId) {
 
     // Attach thumbnails and map items
     const itemsWithThumbnails = sellableItems.map(item => ({
-      assetId: item.assetId,              // <--- Include assetId
+      assetId: item.assetId,
       name: item.name,
       recentAveragePrice: item.recentAveragePrice || 0,
       isLimited: item.isLimited || false,
@@ -103,7 +112,6 @@ app.get("/inventory/:userId", async (req, res) => {
         TotalValue: 0,
         MostExpensiveName: "N/A",
         MostExpensiveImage: "",
-        assetId: null,
         Page: page,
         Limit: limit,
         TotalPages: 0,
@@ -112,7 +120,7 @@ app.get("/inventory/:userId", async (req, res) => {
     }
 
     const TotalValue = items.reduce((sum, item) => sum + item.recentAveragePrice, 0);
-    const topItem = items[0]; // most expensive
+    const topItem = items[0];
 
     // Pagination
     const start = (page - 1) * limit;
@@ -125,7 +133,6 @@ app.get("/inventory/:userId", async (req, res) => {
       TotalValue,
       MostExpensiveName: topItem.name,
       MostExpensiveImage: topItem.imageUrl,
-      assetId: topItem.assetId,      // <--- Add this for Roblox ImageLabel
       Page: page,
       Limit: limit,
       TotalPages: totalPages,
@@ -139,7 +146,6 @@ app.get("/inventory/:userId", async (req, res) => {
       TotalValue: 0,
       MostExpensiveName: "N/A",
       MostExpensiveImage: "",
-      assetId: null,
       Page: page,
       Limit: limit,
       TotalPages: 0,
