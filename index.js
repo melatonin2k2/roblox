@@ -13,23 +13,28 @@ async function getAllSellableItems(userId) {
   let cursor = "";
   let hasMore = true;
 
-  while (hasMore) {
-    const res = await fetch(INVENTORY_API(userId, cursor));
-    const data = await res.json();
+  try {
+    while (hasMore) {
+      const res = await fetch(INVENTORY_API(userId, cursor));
+      const data = await res.json();
 
-    if (data && data.data) {
-      const sellable = data.data.filter(item =>
-        item.isLimited || item.isLimitedUnique || item.restrictions?.includes("Resellable")
-      );
+      if (data && data.data) {
+        // Filter for limited/resellable items
+        const sellable = data.data.filter(item =>
+          item.isLimited || item.isLimitedUnique || item.restrictions?.includes("Resellable")
+        );
 
-      items = items.concat(sellable);
+        items = items.concat(sellable);
+      }
+
+      if (data.nextPageCursor) {
+        cursor = data.nextPageCursor;
+      } else {
+        hasMore = false;
+      }
     }
-
-    if (data.nextPageCursor) {
-      cursor = data.nextPageCursor;
-    } else {
-      hasMore = false;
-    }
+  } catch (err) {
+    console.error(`Failed to fetch inventory for userId ${userId}:`, err);
   }
 
   return items;
@@ -41,41 +46,38 @@ app.get("/inventory/:userId", async (req, res) => {
   try {
     const items = await getAllSellableItems(userId);
 
-    if (!items.length) {
-      return res.json({
-        TotalCount: 0,
-        TotalValue: 0,
-        MostExpensiveName: null,
-        MostExpensiveImage: ""
-      });
-    }
-
-    // Count of all sellable items
-    const TotalCount = items.length;
-
-    // Total value of all sellable items
+    // Total value
     const TotalValue = items.reduce((sum, item) => sum + (item.recentAveragePrice || 0), 0);
 
     // Most expensive item
     let topItem = items.reduce((prev, curr) => {
       return (curr.recentAveragePrice || 0) > (prev.recentAveragePrice || 0) ? curr : prev;
-    });
+    }, items[0] || null);
 
-    // Image for top item
-    const thumbRes = await fetch(`https://thumbnails.roblox.com/v1/assets?assetIds=${topItem.assetId}&size=150x150&format=Png&isCircular=false`);
-    const thumbData = await thumbRes.json();
-    const imageUrl = thumbData.data && thumbData.data[0] ? thumbData.data[0].imageUrl : "";
+    let imageUrl = "";
+    if (topItem) {
+      const thumbRes = await fetch(
+        `https://thumbnails.roblox.com/v1/assets?assetIds=${topItem.assetId}&size=150x150&format=Png&isCircular=false`
+      );
+      const thumbData = await thumbRes.json();
+      imageUrl = thumbData.data && thumbData.data[0] ? thumbData.data[0].imageUrl : "";
+    }
 
     res.json({
-      TotalCount,
+      TotalCount: items.length,
       TotalValue,
-      MostExpensiveName: topItem.name,
+      MostExpensiveName: topItem ? topItem.name : "N/A",
       MostExpensiveImage: imageUrl
     });
-
   } catch (err) {
     console.error(err);
-    res.status(500).json({ error: "Failed to fetch inventory" });
+    // Always respond JSON, never 404
+    res.json({
+      TotalCount: 0,
+      TotalValue: 0,
+      MostExpensiveName: "N/A",
+      MostExpensiveImage: ""
+    });
   }
 });
 
