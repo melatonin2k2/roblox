@@ -4,39 +4,28 @@ const fetch = require("node-fetch");
 const app = express();
 const PORT = 3000;
 
-// Roblox APIs
+// Roblox API endpoints
 const COLLECTIBLES_API = (userId, cursor = "") =>
   `https://inventory.roblox.com/v1/users/${userId}/assets/collectibles?limit=100&cursor=${cursor}`;
-
 const ASSETS_API = (userId, cursor = "") =>
   `https://inventory.roblox.com/v1/users/${userId}/assets?limit=100&cursor=${cursor}`;
 
-// Helper: fetch all pages
+// Fetch all pages from a Roblox API endpoint
 async function fetchAllPages(apiFunc, userId) {
   let items = [];
   let cursor = "";
   let hasMore = true;
 
   while (hasMore) {
-    const url = apiFunc(userId, cursor);
-    const res = await fetch(url);
-
-    if (res.status === 404) {
-      console.log(`[INFO] No more pages for ${apiFunc.name}, stopping.`);
-      break;
-    }
-
+    const res = await fetch(apiFunc(userId, cursor));
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const data = await res.json();
 
-    if (data && data.data) {
-      items = items.concat(data.data);
-      console.log(`[DEBUG] Fetched ${data.data.length} items from ${apiFunc.name}, cursor: ${cursor}`);
-    }
+    if (data && data.data) items = items.concat(data.data);
 
     if (data.nextPageCursor) {
       cursor = data.nextPageCursor;
-      await new Promise(resolve => setTimeout(resolve, 500)); // throttle requests
+      await new Promise(resolve => setTimeout(resolve, 200)); // throttle requests
     } else {
       hasMore = false;
     }
@@ -45,36 +34,49 @@ async function fetchAllPages(apiFunc, userId) {
   return items;
 }
 
-// Attempt to get a Roblox asset ID for ImageLabel
-// Note: In many cases you’ll need to upload a decal or map via database, 
-// as Roblox doesn’t allow direct CDN URLs in ImageLabels
-function getRobloxAssetId(item) {
-  if (item.assetId) return `rbxassetid://${item.assetId}`;
-  return ""; // fallback: no valid ID
+// Fetch thumbnails for multiple assets
+async function fetchThumbnails(assetIds) {
+  if (!assetIds.length) return {};
+  const res = await fetch(
+    `https://thumbnails.roblox.com/v1/assets?assetIds=${assetIds.join(",")}&size=150x150&format=Png&isCircular=false`
+  );
+  const data = await res.json();
+  const thumbnails = {};
+  if (data.data) {
+    data.data.forEach(item => {
+      thumbnails[item.assetId] = item.imageUrl;
+    });
+  }
+  return thumbnails;
 }
 
-// Fetch all sellable items
-async function getAllSellableItems(userId) {
+// Get all inventory items with a price
+async function getAllPricedItems(userId) {
   try {
     const collectibles = await fetchAllPages(COLLECTIBLES_API, userId);
     const assets = await fetchAllPages(ASSETS_API, userId);
 
     const allItems = [...collectibles, ...assets];
 
-    const sellable = allItems.filter(item =>
-      item.isLimited || item.isLimitedUnique || item.saleStatus === "Resellable"
+    // Keep only items with a recentAveragePrice > 0
+    const pricedItems = allItems.filter(item =>
+      item.recentAveragePrice && item.recentAveragePrice > 0
     );
 
-    return sellable.map(item => ({
-      assetId: item.assetId || null,
-      name: item.name || "Unknown",
-      recentAveragePrice: item.recentAveragePrice || 0,
-      isLimited: item.isLimited || false,
-      isLimitedUnique: item.isLimitedUnique || false,
-      saleStatus: item.saleStatus || "",
-      imageUrl: getRobloxAssetId(item) // safe for ImageLabel
-    })).sort((a, b) => b.recentAveragePrice - a.recentAveragePrice);
+    const assetIds = pricedItems.map(item => item.assetId);
+    const thumbnails = await fetchThumbnails(assetIds);
 
+    const itemsWithThumbnails = pricedItems.map(item => ({
+      assetId: item.assetId,
+      name: item.name,
+      recentAveragePrice: item.recentAveragePrice,
+      imageUrl: thumbnails[item.assetId] || ""
+    }));
+
+    // Sort by price descending
+    itemsWithThumbnails.sort((a, b) => b.recentAveragePrice - a.recentAveragePrice);
+
+    return itemsWithThumbnails;
   } catch (err) {
     console.error(`Failed to fetch inventory for userId ${userId}:`, err);
     return [];
@@ -84,9 +86,11 @@ async function getAllSellableItems(userId) {
 // API endpoint
 app.get("/inventory/:userId", async (req, res) => {
   const { userId } = req.params;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 50;
 
   try {
-    const items = await getAllSellableItems(userId);
+    const items = await getAllPricedItems(userId);
 
     if (!items.length) {
       return res.json({
@@ -94,21 +98,31 @@ app.get("/inventory/:userId", async (req, res) => {
         TotalValue: 0,
         MostExpensiveName: "N/A",
         MostExpensiveImage: "",
+        Page: page,
+        Limit: limit,
+        TotalPages: 0,
         Items: []
       });
     }
 
-    const TotalValue = items.reduce((sum, i) => sum + i.recentAveragePrice, 0);
+    const TotalValue = items.reduce((sum, item) => sum + item.recentAveragePrice, 0);
     const topItem = items[0];
+
+    const start = (page - 1) * limit;
+    const end = start + limit;
+    const paginatedItems = items.slice(start, end);
+    const totalPages = Math.ceil(items.length / limit);
 
     res.json({
       TotalCount: items.length,
       TotalValue,
       MostExpensiveName: topItem.name,
       MostExpensiveImage: topItem.imageUrl,
-      Items: items
+      Page: page,
+      Limit: limit,
+      TotalPages: totalPages,
+      Items: paginatedItems
     });
-
   } catch (err) {
     console.error(err);
     res.json({
@@ -116,9 +130,14 @@ app.get("/inventory/:userId", async (req, res) => {
       TotalValue: 0,
       MostExpensiveName: "N/A",
       MostExpensiveImage: "",
+      Page: page,
+      Limit: limit,
+      TotalPages: 0,
       Items: []
     });
   }
 });
 
-app.listen(PORT, () => console.log(`API running on http://localhost:${PORT}`));
+app.listen(PORT, () => {
+  console.log(`API running on http://localhost:${PORT}`);
+});
