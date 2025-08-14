@@ -4,79 +4,92 @@ const fetch = require("node-fetch");
 const app = express();
 const PORT = 3000;
 
+// Roblox Inventory API
 const INVENTORY_API = (userId, cursor = "") =>
   `https://inventory.roblox.com/v1/users/${userId}/assets/collectibles?limit=100&cursor=${cursor}`;
 
-// Fetch helper with retries
-async function fetchWithRetry(url, retries = 5, delay = 500) {
-  for (let i = 0; i < retries; i++) {
-    try {
-      const res = await fetch(url);
-      if (!res.ok) throw new Error(`Status ${res.status}`);
-      const data = await res.json();
-      return data;
-    } catch (err) {
-      console.warn(`Fetch failed (${i + 1}/${retries}): ${err.message}`);
-      if (i < retries - 1) await new Promise(r => setTimeout(r, delay));
-      else throw err;
-    }
-  }
-}
-
-// Get all sellable items; must succeed fully or throw
-async function getAllSellableItems(userId) {
+async function getAllItems(userId) {
   let items = [];
   let cursor = "";
   let hasMore = true;
 
-  while (hasMore) {
-    const data = await fetchWithRetry(INVENTORY_API(userId, cursor));
+  try {
+    while (hasMore) {
+      const res = await fetch(INVENTORY_API(userId, cursor));
+      if (!res.ok) throw new Error(`HTTP ${res.status}`);
+      const data = await res.json();
 
-    if (!data || !data.data) throw new Error("Invalid inventory response");
+      if (data && data.data) {
+        // Collect all items; do not filter yet
+        items = items.concat(data.data);
+      }
 
-    const sellable = data.data.filter(item =>
-      item.isLimited || item.isLimitedUnique || item.restrictions?.includes("Resellable")
-    );
-
-    items = items.concat(sellable);
-
-    if (data.nextPageCursor) {
-      cursor = data.nextPageCursor;
-      await new Promise(r => setTimeout(r, 200)); // avoid rate limit
-    } else {
-      hasMore = false;
+      if (data.nextPageCursor) {
+        cursor = data.nextPageCursor;
+        // Optional: slow down requests to avoid rate limit
+        await new Promise(r => setTimeout(r, 200));
+      } else {
+        hasMore = false;
+      }
     }
+  } catch (err) {
+    console.error(`Failed to fetch inventory for userId ${userId}:`, err);
+    throw err; // Let the API caller handle retries
   }
 
   return items;
+}
+
+// Helper: compute total value and top item
+async function computeInventoryValue(items) {
+  const sellableItems = items.filter(item =>
+    item.isLimited || item.isLimitedUnique || item.restrictions?.includes("Resellable")
+  );
+
+  const TotalValue = sellableItems.reduce(
+    (sum, item) => sum + (item.recentAveragePrice || 0),
+    0
+  );
+
+  let topItem = sellableItems.reduce(
+    (prev, curr) => (curr.recentAveragePrice || 0) > (prev.recentAveragePrice || 0) ? curr : prev,
+    sellableItems[0] || null
+  );
+
+  let imageUrl = "";
+  if (topItem) {
+    const thumbRes = await fetch(
+      `https://thumbnails.roblox.com/v1/assets?assetIds=${topItem.assetId}&size=150x150&format=Png&isCircular=false`
+    );
+    const thumbData = await thumbRes.json();
+    imageUrl = thumbData.data && thumbData.data[0] ? thumbData.data[0].imageUrl : "";
+  }
+
+  return {
+    TotalCount: sellableItems.length,
+    TotalValue,
+    MostExpensiveName: topItem ? topItem.name : "N/A",
+    MostExpensiveImage: imageUrl
+  };
 }
 
 app.get("/inventory/:userId", async (req, res) => {
   const { userId } = req.params;
 
   try {
-    const items = await getAllSellableItems(userId);
+    const items = await getAllItems(userId);
 
-    const TotalValue = items.reduce((sum, item) => sum + (item.recentAveragePrice || 0), 0);
-
-    let topItem = items.reduce((prev, curr) =>
-      (curr.recentAveragePrice || 0) > (prev.recentAveragePrice || 0) ? curr : prev
-    , items[0] || null);
-
-    let imageUrl = "";
-    if (topItem) {
-      const thumbData = await fetchWithRetry(
-        `https://thumbnails.roblox.com/v1/assets?assetIds=${topItem.assetId}&size=150x150&format=Png&isCircular=false`
-      );
-      imageUrl = thumbData.data && thumbData.data[0] ? thumbData.data[0].imageUrl : "";
+    if (!items.length) {
+      return res.json({
+        TotalCount: 0,
+        TotalValue: 0,
+        MostExpensiveName: "N/A",
+        MostExpensiveImage: ""
+      });
     }
 
-    res.json({
-      TotalCount: items.length,
-      TotalValue,
-      MostExpensiveName: topItem ? topItem.name : "N/A",
-      MostExpensiveImage: imageUrl
-    });
+    const inventoryValue = await computeInventoryValue(items);
+    res.json(inventoryValue);
   } catch (err) {
     console.error(err);
     res.status(500).json({
