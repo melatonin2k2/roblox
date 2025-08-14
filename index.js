@@ -1,78 +1,82 @@
 const express = require("express");
 const fetch = require("node-fetch");
+
 const app = express();
 const PORT = 3000;
 
-async function fetchCollectibles(userId) {
-    let url = `https://inventory.roblox.com/v1/users/${userId}/assets/collectibles?sortOrder=Asc&limit=100`;
-    let res = await fetch(url);
-    if (!res.ok) throw new Error(`Error fetching collectibles: ${res.status}`);
-    let data = await res.json();
-    return data.data || [];
-}
+// Roblox API URLs
+const INVENTORY_API = (userId, cursor = "") =>
+  `https://inventory.roblox.com/v1/users/${userId}/assets/collectibles?limit=100&cursor=${cursor}`;
 
-async function fetchUGC(userId) {
-    let url = `https://inventory.roblox.com/v1/users/${userId}/assets?assetType=Hat&sortOrder=Asc&limit=100`;
-    let res = await fetch(url);
-    if (!res.ok) throw new Error(`Error fetching UGC: ${res.status}`);
-    let data = await res.json();
-    // Filter out non-collectible UGCs that cannot be resold
-    return data.data || [];
-}
+async function getAllSellableItems(userId) {
+  let items = [];
+  let cursor = "";
+  let hasMore = true;
 
-async function getLowestResellerPrice(assetId) {
-    let url = `https://economy.roblox.com/v1/assets/${assetId}/resellers?limit=1`;
-    let res = await fetch(url);
-    if (!res.ok) return 0;
-    let data = await res.json();
-    if (data.data && data.data.length > 0) {
-        return data.data[0].price || 0;
+  while (hasMore) {
+    const res = await fetch(INVENTORY_API(userId, cursor));
+    const data = await res.json();
+
+    if (data && data.data) {
+      // Filter to only Limiteds / LimitedU and anything marked as resellable
+      const sellable = data.data.filter(item =>
+        item.assetTypeId === 11 || // Limited hat
+        item.assetTypeId === 19 || // Limited gear
+        item.assetTypeId === 18 || // Limited face
+        item.assetTypeId === 8  || // Limited head accessory
+        item.isLimited || item.isLimitedUnique || item.restrictions?.includes("Resellable")
+      );
+
+      items = items.concat(sellable);
     }
-    return 0;
+
+    if (data.nextPageCursor) {
+      cursor = data.nextPageCursor;
+    } else {
+      hasMore = false;
+    }
+  }
+
+  return items;
 }
 
 app.get("/playerValue/:userId", async (req, res) => {
-    let userId = req.params.userId;
-    try {
-        let totalValue = 0;
-        let allItems = [];
+  const { userId } = req.params;
 
-        // Limiteds & LimitedU
-        let collectibles = await fetchCollectibles(userId);
-        for (let item of collectibles) {
-            let price = item.recentAveragePrice || 0;
-            totalValue += price;
-            allItems.push({
-                name: item.name,
-                price: price,
-                image: `https://www.roblox.com/asset-thumbnail/image?assetId=${item.assetId}&width=420&height=420&format=png`
-            });
-        }
+  try {
+    const items = await getAllSellableItems(userId);
 
-        // Resellable UGC
-        let ugcItems = await fetchUGC(userId);
-        for (let ugc of ugcItems) {
-            let price = await getLowestResellerPrice(ugc.assetId);
-            if (price > 0) { // Only add if resellable
-                totalValue += price;
-                allItems.push({
-                    name: ugc.name,
-                    price: price,
-                    image: `https://www.roblox.com/asset-thumbnail/image?assetId=${ugc.assetId}&width=420&height=420&format=png`
-                });
-            }
-        }
+    // Get prices for each item
+    const pricedItems = await Promise.all(items.map(async (item) => {
+      // Thumbnail image
+      const thumbRes = await fetch(`https://thumbnails.roblox.com/v1/assets?assetIds=${item.assetId}&size=150x150&format=Png&isCircular=false`);
+      const thumbData = await thumbRes.json();
+      const imageUrl = thumbData.data && thumbData.data[0] ? thumbData.data[0].imageUrl : "";
 
-        res.json({
-            totalValue,
-            items: allItems.sort((a, b) => b.price - a.price) // Highest first
-        });
+      return {
+        name: item.name,
+        price: item.recentAveragePrice || 0,
+        image: imageUrl
+      };
+    }));
 
-    } catch (err) {
-        res.status(500).json({ error: err.message });
-    }
+    // Sort highest price first
+    pricedItems.sort((a, b) => b.price - a.price);
+
+    // Calculate total value
+    const totalValue = pricedItems.reduce((sum, item) => sum + (item.price || 0), 0);
+
+    res.json({
+      totalValue,
+      items: pricedItems
+    });
+
+  } catch (err) {
+    console.error(err);
+    res.status(500).json({ error: "Failed to fetch player data" });
+  }
 });
 
 app.listen(PORT, () => {
-    console.log(`Server running on port ${PORT}`);
+  console.log(`API running on http://localhost:${PORT}`);
 });
