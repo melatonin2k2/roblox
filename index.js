@@ -6,30 +6,49 @@ const PORT = 3000;
 
 // Roblox API endpoints for different inventory categories
 const INVENTORY_ENDPOINTS = {
+  // Core inventory endpoints that actually work
   collectibles: (userId, cursor = "") => 
     `https://inventory.roblox.com/v1/users/${userId}/assets/collectibles?limit=100&cursor=${cursor}`,
-  assets: (userId, cursor = "") => 
+  
+  // All asset types - this is the main one that gets most items
+  allAssets: (userId, cursor = "") => 
     `https://inventory.roblox.com/v1/users/${userId}/assets?limit=100&cursor=${cursor}`,
-  clothing: (userId, cursor = "") => 
-    `https://catalog.roblox.com/v1/search/items?category=Clothing&creatorName=${userId}&limit=100&cursor=${cursor}`,
+  
+  // Specific asset types to ensure we don't miss anything
+  shirts: (userId, cursor = "") => 
+    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Shirt&limit=100&cursor=${cursor}`,
+  pants: (userId, cursor = "") => 
+    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Pants&limit=100&cursor=${cursor}`,
+  tshirts: (userId, cursor = "") => 
+    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=TShirt&limit=100&cursor=${cursor}`,
+  hats: (userId, cursor = "") => 
+    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Hat&limit=100&cursor=${cursor}`,
   accessories: (userId, cursor = "") => 
-    `https://catalog.roblox.com/v1/search/items?category=Accessories&creatorName=${userId}&limit=100&cursor=${cursor}`,
+    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Accessory&limit=100&cursor=${cursor}`,
+  faces: (userId, cursor = "") => 
+    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Face&limit=100&cursor=${cursor}`,
   gear: (userId, cursor = "") => 
     `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Gear&limit=100&cursor=${cursor}`,
-  models: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Model&limit=100&cursor=${cursor}`,
+  badges: (userId, cursor = "") => 
+    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Badge&limit=100&cursor=${cursor}`,
+  animations: (userId, cursor = "") => 
+    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Animation&limit=100&cursor=${cursor}`,
   decals: (userId, cursor = "") => 
     `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Decal&limit=100&cursor=${cursor}`,
+  models: (userId, cursor = "") => 
+    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Model&limit=100&cursor=${cursor}`,
+  places: (userId, cursor = "") => 
+    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Place&limit=100&cursor=${cursor}`,
   audio: (userId, cursor = "") => 
     `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Audio&limit=100&cursor=${cursor}`,
   meshes: (userId, cursor = "") => 
     `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=MeshPart&limit=100&cursor=${cursor}`,
   plugins: (userId, cursor = "") => 
     `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Plugin&limit=100&cursor=${cursor}`,
-  animations: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Animation&limit=100&cursor=${cursor}`,
   videos: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Video&limit=100&cursor=${cursor}`
+    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Video&limit=100&cursor=${cursor}`,
+  gamePasses: (userId, cursor = "") => 
+    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=GamePass&limit=100&cursor=${cursor}`
 };
 
 // Fetch all pages from a Roblox API endpoint with better error handling
@@ -137,40 +156,74 @@ async function getAllInventoryItems(userId) {
   const allItems = [];
   const fetchPromises = [];
 
-  // Fetch from all inventory endpoints concurrently
-  for (const [category, apiFunc] of Object.entries(INVENTORY_ENDPOINTS)) {
+  // First, get the main inventory endpoints that are most reliable
+  const priorityEndpoints = ['collectibles', 'allAssets'];
+  const specificEndpoints = Object.keys(INVENTORY_ENDPOINTS).filter(key => !priorityEndpoints.includes(key));
+
+  // Fetch priority endpoints first
+  for (const category of priorityEndpoints) {
+    const apiFunc = INVENTORY_ENDPOINTS[category];
     fetchPromises.push(
       fetchAllPages(apiFunc, userId, category)
         .then(items => {
           console.log(`Fetched ${items.length} items from ${category}`);
           return items.map(item => ({ ...item, category }));
         })
+        .catch(err => {
+          console.warn(`Failed to fetch ${category}:`, err.message);
+          return [];
+        })
     );
   }
 
+  // Then fetch specific asset type endpoints
+  for (const category of specificEndpoints) {
+    const apiFunc = INVENTORY_ENDPOINTS[category];
+    fetchPromises.push(
+      fetchAllPages(apiFunc, userId, category)
+        .then(items => {
+          console.log(`Fetched ${items.length} items from ${category}`);
+          return items.map(item => ({ ...item, category }));
+        })
+        .catch(err => {
+          console.warn(`Failed to fetch ${category}:`, err.message);
+          return [];
+        })
+    );
+  }
+
+  let results = [];
   try {
-    const results = await Promise.all(fetchPromises);
-    results.forEach(categoryItems => {
-      allItems.push(...categoryItems);
-    });
+    results = await Promise.all(fetchPromises);
   } catch (err) {
     console.error("Error fetching inventory items:", err);
   }
 
-  // Remove duplicates based on assetId
+  // Flatten all results
+  results.forEach(categoryItems => {
+    if (Array.isArray(categoryItems)) {
+      allItems.push(...categoryItems);
+    }
+  });
+
+  // Remove duplicates based on assetId - keep the one with most information
   const uniqueItems = [];
-  const seenIds = new Set();
+  const itemMap = new Map();
   
   allItems.forEach(item => {
     const id = item.assetId || item.id;
-    if (id && !seenIds.has(id)) {
-      seenIds.add(id);
-      uniqueItems.push({
-        ...item,
-        assetId: id // Normalize the ID field
-      });
+    if (id) {
+      const existing = itemMap.get(id);
+      if (!existing || Object.keys(item).length > Object.keys(existing).length) {
+        itemMap.set(id, {
+          ...item,
+          assetId: id // Normalize the ID field
+        });
+      }
     }
   });
+
+  uniqueItems.push(...itemMap.values());
 
   console.log(`Total unique items found: ${uniqueItems.length}`);
   
