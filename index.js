@@ -8,6 +8,7 @@ const PORT = 3000;
 const INVENTORY_API = (userId, cursor = "") =>
   `https://inventory.roblox.com/v1/users/${userId}/assets/collectibles?limit=100&cursor=${cursor}`;
 
+// Fetch all limited/resellable items with pagination
 async function getAllSellableItems(userId) {
   let items = [];
   let cursor = "";
@@ -15,29 +16,30 @@ async function getAllSellableItems(userId) {
 
   try {
     while (hasMore) {
-      const res = await fetch(INVENTORY_API(userId, cursor), {
-        headers: { "User-Agent": "Mozilla/5.0" }
-      });
-      if (!res.ok) {
-        console.error(`Error fetching page for ${userId}: ${res.status} ${res.statusText}`);
-        break;
-      }
-
+      const res = await fetch(INVENTORY_API(userId, cursor));
       const data = await res.json();
+
       if (data && data.data) {
-        // Include all items for now; filter later if needed
-        items = items.concat(data.data);
+        // Only include limited and limited unique items
+        const sellable = data.data.filter(item =>
+          item.isLimited || item.isLimitedUnique
+        );
+
+        items = items.concat(sellable);
       }
 
       if (data.nextPageCursor) {
         cursor = data.nextPageCursor;
-        await new Promise(r => setTimeout(r, 250)); // short delay to avoid rate-limit
+        // Small delay to reduce request rate
+        await new Promise(resolve => setTimeout(resolve, 200));
       } else {
         hasMore = false;
       }
     }
   } catch (err) {
     console.error(`Failed to fetch inventory for userId ${userId}:`, err);
+    // Return empty array if fetch fails
+    return [];
   }
 
   return items;
@@ -49,34 +51,40 @@ app.get("/inventory/:userId", async (req, res) => {
   try {
     const items = await getAllSellableItems(userId);
 
-    // Calculate total value (ignore items without recentAveragePrice)
-    const TotalValue = items.reduce((sum, item) => sum + (item.recentAveragePrice ?? 0), 0);
+    if (!items.length) {
+      return res.json({
+        TotalCount: 0,
+        TotalValue: 0,
+        MostExpensiveName: "N/A",
+        MostExpensiveImage: ""
+      });
+    }
 
-    // Most expensive item
-    const topItem = items.reduce((prev, curr) => {
-      const prevPrice = prev?.recentAveragePrice ?? 0;
-      const currPrice = curr?.recentAveragePrice ?? 0;
-      return currPrice > prevPrice ? curr : prev;
-    }, null);
+    // Total value of all limited items
+    const TotalValue = items.reduce((sum, item) => sum + (item.recentAveragePrice || 0), 0);
 
+    // Find the most expensive item
+    let topItem = items.reduce((prev, curr) => {
+      return (curr.recentAveragePrice || 0) > (prev.recentAveragePrice || 0) ? curr : prev;
+    }, items[0]);
+
+    // Fetch thumbnail for top item
     let imageUrl = "";
     if (topItem) {
       const thumbRes = await fetch(
-        `https://thumbnails.roblox.com/v1/assets?assetIds=${topItem.assetId}&size=150x150&format=Png&isCircular=false`,
-        { headers: { "User-Agent": "Mozilla/5.0" } }
+        `https://thumbnails.roblox.com/v1/assets?assetIds=${topItem.assetId}&size=150x150&format=Png&isCircular=false`
       );
       const thumbData = await thumbRes.json();
-      imageUrl = thumbData.data?.[0]?.imageUrl ?? "";
+      imageUrl = thumbData.data && thumbData.data[0] ? thumbData.data[0].imageUrl : "";
     }
-
-    console.log(`UserId ${userId} - TotalCount: ${items.length}, TotalValue: ${TotalValue}`);
 
     res.json({
       TotalCount: items.length,
       TotalValue,
-      MostExpensiveName: topItem?.name ?? "N/A",
+      MostExpensiveName: topItem ? topItem.name : "N/A",
       MostExpensiveImage: imageUrl
     });
+
   } catch (err) {
     console.error(err);
     res.json({
