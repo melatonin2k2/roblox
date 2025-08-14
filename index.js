@@ -4,51 +4,49 @@ const fetch = require("node-fetch");
 const app = express();
 const PORT = 3000;
 
-// Roblox API endpoints for different inventory categories
+// Roblox API endpoints using proxy service - these actually work!
 const INVENTORY_ENDPOINTS = {
-  // Core inventory endpoints that actually work
+  // Check if inventory is viewable first
+  canView: (userId) => 
+    `https://inventory.roproxy.com/v1/users/${userId}/can-view-inventory`,
+    
+  // Main collectibles endpoint (most reliable for limiteds)
   collectibles: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets/collectibles?limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v1/users/${userId}/assets/collectibles?limit=100&cursor=${cursor}`,
   
-  // All asset types - this is the main one that gets most items
-  allAssets: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?limit=100&cursor=${cursor}`,
-  
-  // Specific asset types to ensure we don't miss anything
+  // V2 inventory endpoints for different asset types - these work with roproxy
   shirts: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Shirt&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=Shirt&limit=100&sortOrder=Asc&cursor=${cursor}`,
   pants: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Pants&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=Pants&limit=100&sortOrder=Asc&cursor=${cursor}`,
   tshirts: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=TShirt&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=TShirt&limit=100&sortOrder=Asc&cursor=${cursor}`,
   hats: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Hat&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=Hat&limit=100&sortOrder=Asc&cursor=${cursor}`,
   accessories: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Accessory&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=Accessory&limit=100&sortOrder=Asc&cursor=${cursor}`,
   faces: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Face&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=Face&limit=100&sortOrder=Asc&cursor=${cursor}`,
   gear: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Gear&limit=100&cursor=${cursor}`,
-  badges: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Badge&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=Gear&limit=100&sortOrder=Asc&cursor=${cursor}`,
+  hair: (userId, cursor = "") => 
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=Hair&limit=100&sortOrder=Asc&cursor=${cursor}`,
   animations: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Animation&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=Animation&limit=100&sortOrder=Asc&cursor=${cursor}`,
   decals: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Decal&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=Decal&limit=100&sortOrder=Asc&cursor=${cursor}`,
   models: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Model&limit=100&cursor=${cursor}`,
-  places: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Place&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=Model&limit=100&sortOrder=Asc&cursor=${cursor}`,
   audio: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Audio&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=Audio&limit=100&sortOrder=Asc&cursor=${cursor}`,
   meshes: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=MeshPart&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=MeshPart&limit=100&sortOrder=Asc&cursor=${cursor}`,
   plugins: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Plugin&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=Plugin&limit=100&sortOrder=Asc&cursor=${cursor}`,
   videos: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=Video&limit=100&cursor=${cursor}`,
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=Video&limit=100&sortOrder=Asc&cursor=${cursor}`,
   gamePasses: (userId, cursor = "") => 
-    `https://inventory.roblox.com/v1/users/${userId}/assets?assetTypes=GamePass&limit=100&cursor=${cursor}`
+    `https://inventory.roproxy.com/v2/users/${userId}/inventory?assetTypes=GamePass&limit=100&sortOrder=Asc&cursor=${cursor}`
 };
 
 // Fetch all pages from a Roblox API endpoint with better error handling
@@ -57,44 +55,62 @@ async function fetchAllPages(apiFunc, userId, category = "unknown") {
   let cursor = "";
   let hasMore = true;
   let retryCount = 0;
-  const maxRetries = 3;
+  const maxRetries = 2; // Reduced retries since we're using working endpoints
+  let page = 1;
 
-  while (hasMore && retryCount < maxRetries) {
+  while (hasMore && retryCount < maxRetries && page <= 10) { // Limit pages to prevent infinite loops
     try {
-      const res = await fetch(apiFunc(userId, cursor));
+      const url = apiFunc(userId, cursor);
+      const res = await fetch(url);
       
       if (!res.ok) {
         if (res.status === 429) {
           // Rate limited, wait longer
-          await new Promise(resolve => setTimeout(resolve, 1000));
+          console.log(`Rate limited for ${category}, waiting...`);
+          await new Promise(resolve => setTimeout(resolve, 2000));
           retryCount++;
           continue;
+        }
+        if (res.status === 403) {
+          console.log(`Inventory not public for ${category}`);
+          break; // Inventory is private, not an error
         }
         throw new Error(`HTTP ${res.status} for ${category}`);
       }
       
       const data = await res.json();
 
+      // Handle different response structures
+      let pageData = [];
       if (data && data.data) {
-        items = items.concat(data.data);
+        pageData = data.data;
+      } else if (Array.isArray(data)) {
+        pageData = data;
       }
 
-      if (data.nextPageCursor) {
-        cursor = data.nextPageCursor;
-        await new Promise(resolve => setTimeout(resolve, 300)); // Increased throttle
+      if (pageData.length > 0) {
+        items = items.concat(pageData);
+      }
+
+      // Check for pagination - different APIs use different cursor fields
+      const nextCursor = data.nextPageCursor || data.nextCursor || null;
+      if (nextCursor && pageData.length === 100) { // Only continue if we got a full page
+        cursor = nextCursor;
+        await new Promise(resolve => setTimeout(resolve, 500)); // Increased throttle
+        page++;
       } else {
         hasMore = false;
       }
       
       retryCount = 0; // Reset retry count on success
     } catch (err) {
-      console.warn(`Error fetching ${category} (attempt ${retryCount + 1}):`, err.message);
+      console.warn(`Error fetching ${category} page ${page} (attempt ${retryCount + 1}):`, err.message);
       retryCount++;
       if (retryCount >= maxRetries) {
         console.error(`Failed to fetch ${category} after ${maxRetries} attempts`);
         break;
       }
-      await new Promise(resolve => setTimeout(resolve, 1000));
+      await new Promise(resolve => setTimeout(resolve, 1500));
     }
   }
 
@@ -149,40 +165,49 @@ function isSellable(item) {
   );
 }
 
+// Check if user's inventory is public
+async function checkInventoryVisibility(userId) {
+  try {
+    const res = await fetch(INVENTORY_ENDPOINTS.canView(userId));
+    if (res.ok) {
+      const data = await res.json();
+      return data.canView === true;
+    }
+  } catch (err) {
+    console.warn(`Could not check inventory visibility for ${userId}:`, err.message);
+  }
+  return false;
+}
+
 // Get all items from player's inventory
 async function getAllInventoryItems(userId) {
   console.log(`Fetching complete inventory for user ${userId}...`);
   
+  // First check if inventory is public
+  const canViewInventory = await checkInventoryVisibility(userId);
+  if (!canViewInventory) {
+    console.log(`User ${userId}'s inventory is private or not viewable`);
+    return {
+      allItems: [],
+      sellableItems: [],
+      isPrivate: true
+    };
+  }
+
   const allItems = [];
   const fetchPromises = [];
 
-  // First, get the main inventory endpoints that are most reliable
-  const priorityEndpoints = ['collectibles', 'allAssets'];
-  const specificEndpoints = Object.keys(INVENTORY_ENDPOINTS).filter(key => !priorityEndpoints.includes(key));
-
-  // Fetch priority endpoints first
-  for (const category of priorityEndpoints) {
-    const apiFunc = INVENTORY_ENDPOINTS[category];
+  // Get the endpoints (excluding canView)
+  const endpoints = Object.entries(INVENTORY_ENDPOINTS).filter(([key]) => key !== 'canView');
+  
+  // Fetch from all inventory endpoints with error handling
+  for (const [category, apiFunc] of endpoints) {
     fetchPromises.push(
       fetchAllPages(apiFunc, userId, category)
         .then(items => {
-          console.log(`Fetched ${items.length} items from ${category}`);
-          return items.map(item => ({ ...item, category }));
-        })
-        .catch(err => {
-          console.warn(`Failed to fetch ${category}:`, err.message);
-          return [];
-        })
-    );
-  }
-
-  // Then fetch specific asset type endpoints
-  for (const category of specificEndpoints) {
-    const apiFunc = INVENTORY_ENDPOINTS[category];
-    fetchPromises.push(
-      fetchAllPages(apiFunc, userId, category)
-        .then(items => {
-          console.log(`Fetched ${items.length} items from ${category}`);
+          if (items.length > 0) {
+            console.log(`Fetched ${items.length} items from ${category}`);
+          }
           return items.map(item => ({ ...item, category }));
         })
         .catch(err => {
@@ -252,7 +277,8 @@ async function getAllInventoryItems(userId) {
 
   return {
     allItems: enrichedItems,
-    sellableItems: enrichedItems.filter(item => item.isSellable)
+    sellableItems: enrichedItems.filter(item => item.isSellable),
+    isPrivate: false
   };
 }
 
@@ -264,11 +290,30 @@ app.get("/inventory/:userId", async (req, res) => {
   const showOnlySellable = req.query.sellable === "true";
 
   try {
-    const { allItems, sellableItems } = await getAllInventoryItems(userId);
+    const { allItems, sellableItems, isPrivate } = await getAllInventoryItems(userId);
+
+    if (isPrivate) {
+      return res.json({
+        UserId: userId,
+        InventoryStatus: "Private",
+        TotalItems: 0,
+        SellableItems: 0,
+        TotalValue: 0,
+        MostExpensiveName: "N/A",
+        MostExpensivePrice: 0,
+        MostExpensiveImage: "",
+        Page: page,
+        Limit: limit,
+        TotalPages: 0,
+        ShowingOnlySellable: showOnlySellable,
+        Items: []
+      });
+    }
 
     if (!allItems.length) {
       return res.json({
         UserId: userId,
+        InventoryStatus: "Empty",
         TotalItems: 0,
         SellableItems: 0,
         TotalValue: 0,
@@ -312,6 +357,7 @@ app.get("/inventory/:userId", async (req, res) => {
 
     res.json({
       UserId: userId,
+      InventoryStatus: "Public",
       TotalItems: allItems.length,
       SellableItems: sellableItems.length,
       TotalValue: Math.round(totalValue),
