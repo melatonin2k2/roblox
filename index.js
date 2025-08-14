@@ -7,8 +7,8 @@ const PORT = 3000;
 const INVENTORY_API = (userId, cursor = "") =>
   `https://inventory.roblox.com/v1/users/${userId}/assets/collectibles?limit=100&cursor=${cursor}`;
 
-// Helper: fetch with retry
-async function fetchWithRetry(url, retries = 3, delay = 500) {
+// Fetch helper with retries
+async function fetchWithRetry(url, retries = 5, delay = 500) {
   for (let i = 0; i < retries; i++) {
     try {
       const res = await fetch(url);
@@ -23,33 +23,28 @@ async function fetchWithRetry(url, retries = 3, delay = 500) {
   }
 }
 
-// Get all sellable items, with retry and rate limit check
+// Get all sellable items; must succeed fully or throw
 async function getAllSellableItems(userId) {
   let items = [];
   let cursor = "";
   let hasMore = true;
 
   while (hasMore) {
-    try {
-      const data = await fetchWithRetry(INVENTORY_API(userId, cursor));
+    const data = await fetchWithRetry(INVENTORY_API(userId, cursor));
 
-      if (data && data.data) {
-        const sellable = data.data.filter(item =>
-          item.isLimited || item.isLimitedUnique || item.restrictions?.includes("Resellable")
-        );
-        items = items.concat(sellable);
-      }
+    if (!data || !data.data) throw new Error("Invalid inventory response");
 
-      if (data.nextPageCursor) {
-        cursor = data.nextPageCursor;
-        // Short delay between pages to prevent rate limit
-        await new Promise(r => setTimeout(r, 200));
-      } else {
-        hasMore = false;
-      }
-    } catch (err) {
-      console.error(`Failed to fetch inventory for userId ${userId}:`, err.message);
-      hasMore = false; // stop loop if repeated failure
+    const sellable = data.data.filter(item =>
+      item.isLimited || item.isLimitedUnique || item.restrictions?.includes("Resellable")
+    );
+
+    items = items.concat(sellable);
+
+    if (data.nextPageCursor) {
+      cursor = data.nextPageCursor;
+      await new Promise(r => setTimeout(r, 200)); // avoid rate limit
+    } else {
+      hasMore = false;
     }
   }
 
@@ -64,7 +59,7 @@ app.get("/inventory/:userId", async (req, res) => {
 
     const TotalValue = items.reduce((sum, item) => sum + (item.recentAveragePrice || 0), 0);
 
-    let topItem = items.reduce((prev, curr) => 
+    let topItem = items.reduce((prev, curr) =>
       (curr.recentAveragePrice || 0) > (prev.recentAveragePrice || 0) ? curr : prev
     , items[0] || null);
 
@@ -84,7 +79,7 @@ app.get("/inventory/:userId", async (req, res) => {
     });
   } catch (err) {
     console.error(err);
-    res.json({
+    res.status(500).json({
       TotalCount: 0,
       TotalValue: 0,
       MostExpensiveName: "N/A",
