@@ -25,7 +25,7 @@ async function fetchAllPages(apiFunc, userId) {
 
     if (data.nextPageCursor) {
       cursor = data.nextPageCursor;
-      await new Promise(resolve => setTimeout(resolve, 200)); // throttle requests
+      await new Promise(resolve => setTimeout(resolve, 200));
     } else {
       hasMore = false;
     }
@@ -34,7 +34,7 @@ async function fetchAllPages(apiFunc, userId) {
   return items;
 }
 
-// Fetch thumbnails for multiple assets
+// Fetch thumbnail URLs for multiple assets
 async function fetchThumbnails(assetIds) {
   if (!assetIds.length) return {};
   const res = await fetch(
@@ -50,31 +50,32 @@ async function fetchThumbnails(assetIds) {
   return thumbnails;
 }
 
-// Get all inventory items with a price
-async function getAllPricedItems(userId) {
+// Scan entire inventory and return sellable items only
+async function getSellableItems(userId) {
   try {
     const collectibles = await fetchAllPages(COLLECTIBLES_API, userId);
     const assets = await fetchAllPages(ASSETS_API, userId);
-
     const allItems = [...collectibles, ...assets];
 
-    // Keep only items with a recentAveragePrice > 0
-    const pricedItems = allItems.filter(item =>
-      item.recentAveragePrice && item.recentAveragePrice > 0
+    // Only keep items that the user can sell
+    const sellableItems = allItems.filter(item =>
+      item.isLimited || item.isLimitedUnique || item.saleStatus === "Resellable"
     );
 
-    const assetIds = pricedItems.map(item => item.assetId);
+    // Fetch thumbnails
+    const assetIds = sellableItems.map(item => item.assetId);
     const thumbnails = await fetchThumbnails(assetIds);
 
-    const itemsWithThumbnails = pricedItems.map(item => ({
+    // Map items with price and thumbnail
+    const itemsWithThumbnails = sellableItems.map(item => ({
       assetId: item.assetId,
       name: item.name,
-      recentAveragePrice: item.recentAveragePrice,
+      recentAveragePrice: item.recentAveragePrice || 0,
+      isLimited: item.isLimited || false,
+      isLimitedUnique: item.isLimitedUnique || false,
+      saleStatus: item.saleStatus || "",
       imageUrl: thumbnails[item.assetId] || ""
     }));
-
-    // Sort by price descending
-    itemsWithThumbnails.sort((a, b) => b.recentAveragePrice - a.recentAveragePrice);
 
     return itemsWithThumbnails;
   } catch (err) {
@@ -86,42 +87,32 @@ async function getAllPricedItems(userId) {
 // API endpoint
 app.get("/inventory/:userId", async (req, res) => {
   const { userId } = req.params;
-  const page = parseInt(req.query.page) || 1;
-  const limit = parseInt(req.query.limit) || 50;
 
   try {
-    const items = await getAllPricedItems(userId);
+    const sellableItems = await getSellableItems(userId);
 
-    if (!items.length) {
+    if (!sellableItems.length) {
       return res.json({
         TotalCount: 0,
         TotalValue: 0,
         MostExpensiveName: "N/A",
-        MostExpensiveImage: "",
-        Page: page,
-        Limit: limit,
-        TotalPages: 0,
-        Items: []
+        MostExpensiveImage: ""
       });
     }
 
-    const TotalValue = items.reduce((sum, item) => sum + item.recentAveragePrice, 0);
-    const topItem = items[0];
+    // Total value = sum of recentAveragePrice of sellable items
+    const TotalValue = sellableItems.reduce((sum, item) => sum + (item.recentAveragePrice || 0), 0);
 
-    const start = (page - 1) * limit;
-    const end = start + limit;
-    const paginatedItems = items.slice(start, end);
-    const totalPages = Math.ceil(items.length / limit);
+    // Most expensive sellable item
+    const topItem = sellableItems.reduce((prev, curr) =>
+      (curr.recentAveragePrice || 0) > (prev.recentAveragePrice || 0) ? curr : prev
+    , sellableItems[0]);
 
     res.json({
-      TotalCount: items.length,
+      TotalCount: sellableItems.length,
       TotalValue,
       MostExpensiveName: topItem.name,
-      MostExpensiveImage: topItem.imageUrl,
-      Page: page,
-      Limit: limit,
-      TotalPages: totalPages,
-      Items: paginatedItems
+      MostExpensiveImage: topItem.imageUrl
     });
   } catch (err) {
     console.error(err);
@@ -129,11 +120,7 @@ app.get("/inventory/:userId", async (req, res) => {
       TotalCount: 0,
       TotalValue: 0,
       MostExpensiveName: "N/A",
-      MostExpensiveImage: "",
-      Page: page,
-      Limit: limit,
-      TotalPages: 0,
-      Items: []
+      MostExpensiveImage: ""
     });
   }
 });
