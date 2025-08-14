@@ -25,7 +25,7 @@ async function fetchAllPages(apiFunc, userId) {
 
     if (data.nextPageCursor) {
       cursor = data.nextPageCursor;
-      await new Promise(resolve => setTimeout(resolve, 200));
+      await new Promise(resolve => setTimeout(resolve, 200)); // throttle
     } else {
       hasMore = false;
     }
@@ -34,7 +34,7 @@ async function fetchAllPages(apiFunc, userId) {
   return items;
 }
 
-// Fetch thumbnail URLs for multiple assets
+// Fetch thumbnails for multiple assets
 async function fetchThumbnails(assetIds) {
   if (!assetIds.length) return {};
   const res = await fetch(
@@ -50,24 +50,25 @@ async function fetchThumbnails(assetIds) {
   return thumbnails;
 }
 
-// Scan entire inventory and return sellable items only
+// Get all sellable items
 async function getSellableItems(userId) {
   try {
     const collectibles = await fetchAllPages(COLLECTIBLES_API, userId);
     const assets = await fetchAllPages(ASSETS_API, userId);
     const allItems = [...collectibles, ...assets];
 
-    // Only keep items that the user can sell
+    // Keep only items the user can sell
     const sellableItems = allItems.filter(item =>
-      item.isLimited || item.isLimitedUnique || item.saleStatus === "Resellable"
+      item.isLimited === true ||
+      item.isLimitedUnique === true ||
+      item.saleStatus === "ForSale" ||
+      item.saleStatus === "Resellable"
     );
 
-    // Fetch thumbnails
     const assetIds = sellableItems.map(item => item.assetId);
     const thumbnails = await fetchThumbnails(assetIds);
 
-    // Map items with price and thumbnail
-    const itemsWithThumbnails = sellableItems.map(item => ({
+    return sellableItems.map(item => ({
       assetId: item.assetId,
       name: item.name,
       recentAveragePrice: item.recentAveragePrice || 0,
@@ -76,17 +77,17 @@ async function getSellableItems(userId) {
       saleStatus: item.saleStatus || "",
       imageUrl: thumbnails[item.assetId] || ""
     }));
-
-    return itemsWithThumbnails;
   } catch (err) {
     console.error(`Failed to fetch inventory for userId ${userId}:`, err);
     return [];
   }
 }
 
-// API endpoint
+// API endpoint with pagination
 app.get("/inventory/:userId", async (req, res) => {
   const { userId } = req.params;
+  const page = parseInt(req.query.page) || 1;
+  const limit = parseInt(req.query.limit) || 50;
 
   try {
     const sellableItems = await getSellableItems(userId);
@@ -96,23 +97,40 @@ app.get("/inventory/:userId", async (req, res) => {
         TotalCount: 0,
         TotalValue: 0,
         MostExpensiveName: "N/A",
-        MostExpensiveImage: ""
+        MostExpensiveImage: "",
+        Page: page,
+        Limit: limit,
+        TotalPages: 0,
+        Items: []
       });
     }
 
-    // Total value = sum of recentAveragePrice of sellable items
-    const TotalValue = sellableItems.reduce((sum, item) => sum + (item.recentAveragePrice || 0), 0);
+    // Total value of all sellable items
+    const TotalValue = sellableItems.reduce(
+      (sum, item) => sum + (item.recentAveragePrice || 0),
+      0
+    );
 
     // Most expensive sellable item
     const topItem = sellableItems.reduce((prev, curr) =>
       (curr.recentAveragePrice || 0) > (prev.recentAveragePrice || 0) ? curr : prev
     , sellableItems[0]);
 
+    // Pagination
+    const start = (page - 1) * limit;
+    const end = start + limit;
+    const paginatedItems = sellableItems.slice(start, end);
+    const totalPages = Math.ceil(sellableItems.length / limit);
+
     res.json({
       TotalCount: sellableItems.length,
       TotalValue,
       MostExpensiveName: topItem.name,
-      MostExpensiveImage: topItem.imageUrl
+      MostExpensiveImage: topItem.imageUrl,
+      Page: page,
+      Limit: limit,
+      TotalPages: totalPages,
+      Items: paginatedItems
     });
   } catch (err) {
     console.error(err);
@@ -120,7 +138,11 @@ app.get("/inventory/:userId", async (req, res) => {
       TotalCount: 0,
       TotalValue: 0,
       MostExpensiveName: "N/A",
-      MostExpensiveImage: ""
+      MostExpensiveImage: "",
+      Page: page,
+      Limit: limit,
+      TotalPages: 0,
+      Items: []
     });
   }
 });
