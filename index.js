@@ -154,18 +154,25 @@ async function fetchThumbnails(assetIds) {
 
 // Check if an item is sellable (Limited, Limited U, UGC, etc.)
 function isSellable(item) {
-  return (
-    item.isLimited === true ||
-    item.isLimitedUnique === true ||
-    item.saleStatus === "ForSale" ||
-    item.saleStatus === "Resellable" ||
-    item.itemRestrictions?.includes("Limited") ||
-    item.itemRestrictions?.includes("LimitedUnique") ||
-    item.creatorType === "User" // UGC items
-  );
+  // Check various fields that indicate sellability
+  const sellableConditions = [
+    item.isLimited === true,
+    item.isLimitedUnique === true,
+    item.saleStatus === "ForSale",
+    item.saleStatus === "Resellable", 
+    item.itemRestrictions && item.itemRestrictions.includes("Limited"),
+    item.itemRestrictions && item.itemRestrictions.includes("LimitedUnique"),
+    item.creatorType === "User", // UGC items
+    item.creatorType === "Group", // Group UGC items
+    item.price && item.price > 0, // Has a price
+    item.priceInRobux && item.priceInRobux > 0, // Has robux price
+    item.recentAveragePrice && item.recentAveragePrice > 0 // Has market value
+  ];
+  
+  return sellableConditions.some(condition => condition === true);
 }
 
-// Check if user's inventory is public
+// Check if user's inventory is public - with better fallback logic
 async function checkInventoryVisibility(userId) {
   try {
     const res = await fetch(INVENTORY_ENDPOINTS.canView(userId));
@@ -176,26 +183,21 @@ async function checkInventoryVisibility(userId) {
   } catch (err) {
     console.warn(`Could not check inventory visibility for ${userId}:`, err.message);
   }
-  return false;
+  
+  // If we can't check visibility, assume it's viewable and let the actual fetching determine
+  console.log(`Assuming inventory is viewable for ${userId} - will verify during fetch`);
+  return true;
 }
 
 // Get all items from player's inventory
 async function getAllInventoryItems(userId) {
   console.log(`Fetching complete inventory for user ${userId}...`);
   
-  // First check if inventory is public
-  const canViewInventory = await checkInventoryVisibility(userId);
-  if (!canViewInventory) {
-    console.log(`User ${userId}'s inventory is private or not viewable`);
-    return {
-      allItems: [],
-      sellableItems: [],
-      isPrivate: true
-    };
-  }
-
   const allItems = [];
   const fetchPromises = [];
+
+  // Skip the canView check since it's unreliable - let actual fetching determine privacy
+  // If inventory is truly private, the fetch requests will fail appropriately
 
   // Get the endpoints (excluding canView)
   const endpoints = Object.entries(INVENTORY_ENDPOINTS).filter(([key]) => key !== 'canView');
@@ -231,6 +233,18 @@ async function getAllInventoryItems(userId) {
     }
   });
 
+  // Check if we got any items at all - if not, inventory might be private
+  const isActuallyPrivate = allItems.length === 0;
+
+  if (isActuallyPrivate) {
+    console.log(`No items fetched for user ${userId} - inventory appears to be private`);
+    return {
+      allItems: [],
+      sellableItems: [],
+      isPrivate: true
+    };
+  }
+
   // Remove duplicates based on assetId - keep the one with most information
   const uniqueItems = [];
   const itemMap = new Map();
@@ -256,6 +270,22 @@ async function getAllInventoryItems(userId) {
   const sellableItems = uniqueItems.filter(isSellable);
   console.log(`Sellable items found: ${sellableItems.length}`);
 
+  // Log some sample items to debug sellability detection
+  if (sellableItems.length === 0 && uniqueItems.length > 0) {
+    console.log("No sellable items detected. Sample items:");
+    uniqueItems.slice(0, 3).forEach((item, i) => {
+      console.log(`Item ${i + 1}:`, {
+        name: item.name,
+        assetType: item.assetType,
+        creatorType: item.creatorType,
+        isLimited: item.isLimited,
+        saleStatus: item.saleStatus,
+        price: item.price,
+        recentAveragePrice: item.recentAveragePrice
+      });
+    });
+  }
+
   // Fetch thumbnails for all items (not just sellable ones)
   const assetIds = uniqueItems.map(item => item.assetId).filter(id => id);
   const thumbnails = await fetchThumbnails(assetIds);
@@ -271,6 +301,7 @@ async function getAllInventoryItems(userId) {
     category: item.category || "unknown",
     assetType: item.assetType || "Unknown",
     creatorType: item.creatorType || "Unknown",
+    price: item.price || 0,
     imageUrl: thumbnails[item.assetId] || "",
     isSellable: isSellable(item)
   }));
